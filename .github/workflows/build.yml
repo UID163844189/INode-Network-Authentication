@@ -33,8 +33,7 @@ jobs:
 
       - name: Check zzz-client structure
         run: |
-          ls openwrt-sdk/package/zzz-client/
-          cat openwrt-sdk/package/zzz-client/Makefile
+          find openwrt-sdk/package/zzz-client/ -type f
 
       - name: Build
         working-directory: openwrt-sdk
