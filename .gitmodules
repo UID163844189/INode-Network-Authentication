@@ -1,0 +1,3 @@
+[submodule "zzz-client-source"]
+	path = zzz-client-source
+	url = https://github.com/diredocks/zzz.git
