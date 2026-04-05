@@ -1,0 +1,215 @@
+#!/bin/sh /etc/rc.common
+# ============================================================
+#  zzz 802.1X Client - OpenWrt Init Script
+#  Manages the zzz EAPOL authentication daemon
+# ============================================================
+
+USE_PROCD=1
+START=99
+STOP=10
+
+NAME=zzz
+PROG="$(which zzz 2>/dev/null)"
+[ -z "$PROG" ] && PROG=/usr/bin/zzz
+[ -x /bin/zzz ] && PROG=/bin/zzz
+
+CONFIG_FILE=/etc/config.ini
+CHECK_SCRIPT=/etc/zzz/check_network.sh
+LOG_TAG="zzz-init"
+
+log_msg() {
+	logger -t "$LOG_TAG" "$1"
+}
+
+read_config() {
+	if [ ! -f "$CONFIG_FILE" ]; then
+		log_msg "ERROR: Config file not found at $CONFIG_FILE"
+		return 1
+	fi
+
+	DEVICE=$(grep -E "^device[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^device[[:space:]]*=[[:space:]]*//" | tr -d '\r')
+	USERNAME=$(grep -E "^username[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^username[[:space:]]*=[[:space:]]*//" | tr -d '\r')
+	INTERFACE=$(grep -E "^interface[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^interface[[:space:]]*=[[:space:]]*//" | tr -d '\r')
+
+	FIX_TTL=$(grep -E "^fix_ttl[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^fix_ttl[[:space:]]*=[[:space:]]*//" | tr -d '\r')
+	DISABLE_IPV6=$(grep -E "^disable_ipv6[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^disable_ipv6[[:space:]]*=[[:space:]]*//" | tr -d '\r')
+
+	if [ -z "$DEVICE" ]; then
+		log_msg "ERROR: No 'device' specified in $CONFIG_FILE"
+		return 1
+	fi
+
+	return 0
+}
+
+apply_anti_detection() {
+	if [ "$FIX_TTL" = "1" ]; then
+		log_msg "Enabling TTL anti-detection (set TTL to 64)"
+		# Clear existing rules to avoid duplicates
+		iptables -t mangle -D POSTROUTING -j TTL --ttl-set 64 2>/dev/null
+		iptables -t mangle -D PREROUTING -j TTL --ttl-set 64 2>/dev/null
+		# Apply TTL=64 for outgoing traffic
+		iptables -t mangle -I POSTROUTING -j TTL --ttl-set 64 2>/dev/null
+		iptables -t mangle -I PREROUTING -j TTL --ttl-set 64 2>/dev/null
+	fi
+	
+	if [ "$DISABLE_IPV6" = "1" ]; then
+		log_msg "Disabling IPv6 to prevent sharing detection leak"
+		sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null 2>&1
+		sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1
+	fi
+}
+
+remove_anti_detection() {
+	if [ "$FIX_TTL" = "1" ]; then
+		log_msg "Removing TTL anti-detection rules"
+		iptables -t mangle -D POSTROUTING -j TTL --ttl-set 64 2>/dev/null
+		iptables -t mangle -D PREROUTING -j TTL --ttl-set 64 2>/dev/null
+	fi
+	
+	if [ "$DISABLE_IPV6" = "1" ]; then
+		log_msg "Re-enabling IPv6"
+		sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null 2>&1
+		sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1
+	fi
+}
+
+validate_config() {
+	if [ ! -x "$PROG" ]; then
+		log_msg "ERROR: zzz binary not found or not executable at $PROG"
+		return 1
+	fi
+
+	if [ ! -f "$CONFIG_FILE" ]; then
+		log_msg "ERROR: Config file not found at $CONFIG_FILE"
+		return 1
+	fi
+
+	if [ ! -d "/sys/class/net/$DEVICE" ] 2>/dev/null; then
+		log_msg "WARNING: Network interface $DEVICE does not exist yet, will retry"
+	fi
+
+	return 0
+}
+
+start_service() {
+	read_config || return 1
+	validate_config || return 1
+
+	log_msg "Starting zzz on device $DEVICE (user: ${USERNAME:-unknown}) with executable $PROG"
+
+	procd_open_instance "$NAME"
+	# zzz 程序的第一个参数必须是配置文件的路径
+	procd_set_param command "$PROG" "$CONFIG_FILE"
+	procd_set_param respawn 3600 5 5
+	procd_set_param pidfile /var/run/$NAME.pid
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	# Watch the network interface
+	[ -n "$DEVICE" ] && procd_set_param netdev "$DEVICE"
+	# Restart on config file change
+	[ -f "$CONFIG_FILE" ] && procd_set_param file "$CONFIG_FILE"
+	procd_close_instance
+
+	# Apply Anti-Detection mechanisms
+	apply_anti_detection
+
+	log_msg "zzz service started (procd managed)"
+}
+
+stop_service() {
+	log_msg "Stopping zzz service"
+	killall "$NAME" 2>/dev/null
+	
+	# Cleanup Anti-Detection mechanisms
+	read_config
+	remove_anti_detection
+}
+
+service_triggers() {
+	procd_add_reload_trigger "zzz"
+}
+
+reload_service() {
+	log_msg "Reloading zzz service (restarting)"
+	stop
+	start
+}
+
+# Legacy start/stop for non-procd systems (OpenWrt < 15.x)
+if [ ! -x /sbin/procd ]; then
+	start() {
+		read_config || return 1
+		validate_config || return 1
+
+		# Check if already running
+		local pid
+		pid="$(pidof "$NAME" 2>/dev/null)"
+		if [ -n "$pid" ]; then
+			log_msg "zzz is already running (PID: $pid), restarting..."
+			stop
+			sleep 1
+		fi
+
+		log_msg "Starting zzz on device $DEVICE"
+
+		# Bring up the network interface if it's down
+		if [ -n "$INTERFACE" ]; then
+			ip link set "$INTERFACE" up 2>/dev/null
+		fi
+		sleep 1
+
+		# 运行 zzz，并将配置文件路径作为参数传入
+		"$PROG" "$CONFIG_FILE" >/dev/null 2>&1 &
+		local ret=$?
+		if [ $ret -eq 0 ]; then
+			pid="$(pidof "$NAME" 2>/dev/null)"
+			echo "$pid" > /var/run/$NAME.pid 2>/dev/null
+			apply_anti_detection
+			log_msg "zzz started successfully (PID: ${pid:-unknown})"
+		else
+			log_msg "ERROR: Failed to start zzz (exit code: $ret)"
+		fi
+		return $ret
+	}
+
+	stop() {
+		log_msg "Stopping zzz"
+		local pid
+		pid="$(pidof "$NAME" 2>/dev/null)"
+		if [ -n "$pid" ]; then
+			kill "$pid" 2>/dev/null
+			sleep 1
+			# Force kill if still running
+			pid="$(pidof "$NAME" 2>/dev/null)"
+			[ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
+			rm -f /var/run/$NAME.pid 2>/dev/null
+			
+			read_config
+			remove_anti_detection
+			
+			log_msg "zzz stopped"
+		else
+			log_msg "zzz is not running"
+		fi
+	}
+
+	restart() {
+		stop
+		sleep 2
+		start
+	}
+fi
+
+# Expose status command
+status() {
+	local pid
+	pid="$(pidof "$NAME" 2>/dev/null)"
+	if [ -n "$pid" ]; then
+		echo "zzz is running (PID: $pid)"
+		return 0
+	else
+		echo "zzz is not running"
+		return 1
+	fi
+}
