@@ -30,6 +30,12 @@ jobs:
           cp -r luci-app-zzz openwrt-sdk/package/luci-app-zzz
           cp -r zzz-client-source openwrt-sdk/package/zzz-client
 
+
+      - name: Check zzz-client structure
+        run: |
+          ls openwrt-sdk/package/zzz-client/
+          cat openwrt-sdk/package/zzz-client/Makefile
+
       - name: Build
         working-directory: openwrt-sdk
         run: |
