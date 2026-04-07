@@ -15,6 +15,7 @@ PROG="$(which zzz 2>/dev/null)"
 
 CONFIG_FILE=/etc/config.ini
 CHECK_SCRIPT=/etc/zzz/check_network.sh
+WATCHDOG_SCRIPT=/etc/zzz/watchdog.sh
 LOG_TAG="zzz-init"
 
 log_msg() {
@@ -113,6 +114,22 @@ start_service() {
 
 	# Apply Anti-Detection mechanisms
 	apply_anti_detection
+
+	# Start watchdog instance for stable auto-reconnect (optional)
+	local wd_enabled
+	wd_enabled=$(grep -E "^enabled[[:space:]]*=" "$CONFIG_FILE" 2>/dev/null | head -1 | sed "s/^enabled[[:space:]]*=[[:space:]]*//" | tr -d '\r')
+	if [ "$wd_enabled" = "1" ] && [ -x "$WATCHDOG_SCRIPT" ] && [ -x "$CHECK_SCRIPT" ]; then
+		procd_open_instance "${NAME}_watchdog"
+		procd_set_param command "$WATCHDOG_SCRIPT" "$CONFIG_FILE" "$CHECK_SCRIPT"
+		procd_set_param respawn 3600 5 5
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		[ -f "$CONFIG_FILE" ] && procd_set_param file "$CONFIG_FILE"
+		[ -x "$CHECK_SCRIPT" ] && procd_set_param file "$CHECK_SCRIPT"
+		[ -x "$WATCHDOG_SCRIPT" ] && procd_set_param file "$WATCHDOG_SCRIPT"
+		procd_close_instance
+		log_msg "Auto-reconnect watchdog started"
+	fi
 
 	log_msg "zzz service started (procd managed)"
 }

@@ -40,6 +40,7 @@ define Package/luci-app-zzz/install
 
 	$(INSTALL_DIR) $(1)/etc/zzz
 	$(INSTALL_BIN) files/etc/zzz/check_network.sh $(1)/etc/zzz/check_network.sh
+	$(INSTALL_BIN) files/etc/zzz/watchdog.sh $(1)/etc/zzz/watchdog.sh
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) files/etc/config/zzz $(1)/etc/config/zzz
 
