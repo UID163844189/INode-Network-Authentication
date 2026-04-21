@@ -2,7 +2,7 @@
 
 OpenWrt 的 LuCI 图形界面插件，用于配置和管理 [zzz](https://github.com/diredocks/zzz) —— 一个基于 802.1X EAPOL 协议的校园网/企业网认证客户端。
 
-> 本项目基于 [diredocks/zzz](https://github.com/diredocks/zzz) 开发，为其提供 LuCI 管理界面并添加了统一ttl用于简单的防检测，并对 zzz-client 进行了针对性修改。感谢原作者的工作。
+> 本项目基于 [diredocks/zzz](https://github.com/diredocks/zzz) 开发,故文件夹命名沿用zzz.软件提供 LuCI 管理界面并添加了统一ttl用于简单的防检测，并对 zzz-client 进行了针对性修改。感谢原作者的工作。
 
 **已测试环境：（H3C iNode 802.1X 认证）**
 
